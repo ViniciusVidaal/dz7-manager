@@ -12,8 +12,14 @@ const isAbortError = (err) => {
 
 export default function useCollection(collectionName, orderField = "createdAt", options = {}) {
   const { enabled = true, realtime = true, filters = [], orderDirection = "desc" } = options;
-  const filtersKey = JSON.stringify(filters);
-  const stableFilters = useMemo(() => filters, [filtersKey]);
+  const filtersKey = JSON.stringify(filters || []);
+  const stableFilters = useMemo(() => {
+    try {
+      return JSON.parse(filtersKey);
+    } catch {
+      return [];
+    }
+  }, [filtersKey]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -86,7 +92,7 @@ export default function useCollection(collectionName, orderField = "createdAt", 
     return () => {
       active = false;
     };
-  }, [collectionName, orderField, enabled, realtime, orderDirection, filtersKey, stableFilters]);
+  }, [collectionName, orderField, enabled, realtime, orderDirection, stableFilters]);
 
   return { data, loading, error };
 }
