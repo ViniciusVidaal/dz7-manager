@@ -37,6 +37,7 @@ const initialConversion = {
   diaVencimento: "",
   contratoInicio: "",
   contratoTermo: "30dias",
+  contratoFimManual: "",
   servicos: [],
 };
 const CONTRACT_TERMS = [
@@ -69,6 +70,17 @@ const getContractEnd = (startDate, term) => {
   return addMonths(startDate, 1);
 };
 
+const parseNumberInput = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  if (raw.includes(",")) {
+    const normalized = raw.replace(/\./g, "").replace(",", ".").replace(/[^\d.-]/g, "");
+    return Number(normalized);
+  }
+  const normalized = raw.replace(/[^\d.-]/g, "");
+  return Number(normalized);
+};
+
 export default function Leads() {
   const { data: leads } = useCollection("leads", "createdAt");
   const { profile, user, isAdmin } = useAuth();
@@ -86,10 +98,15 @@ export default function Leads() {
     () => parseDateInput(conversion.contratoInicio),
     [conversion.contratoInicio]
   );
-  const contractEndDate = useMemo(
+  const autoEndDate = useMemo(
     () => getContractEnd(contractStartDate, conversion.contratoTermo),
     [contractStartDate, conversion.contratoTermo]
   );
+  const manualEndDate = useMemo(
+    () => parseDateInput(conversion.contratoFimManual),
+    [conversion.contratoFimManual]
+  );
+  const contractEndDate = manualEndDate || autoEndDate;
 
   const canCreate = isAdmin || profile?.role === "funcionario";
   const rows = leads;
@@ -195,7 +212,7 @@ export default function Leads() {
     };
 
     if (conversion.modalidade === "unico") {
-      const valorTotal = Number(conversion.valorTotal || 0);
+      const valorTotal = parseNumberInput(conversion.valorTotal);
       if (valorTotal <= 0) {
         setConvertInfo("Informe o valor total.");
         return;
@@ -235,17 +252,33 @@ export default function Leads() {
       return;
     }
 
-    const valorSetup = Number(conversion.valorSetup || 0);
-    const valorRecorrencia = Number(conversion.valorRecorrencia || 0);
+    const valorSetup = parseNumberInput(conversion.valorSetup);
+    const valorRecorrencia = parseNumberInput(conversion.valorRecorrencia);
     const diaVencimento = Number(conversion.diaVencimento || 0);
 
-    if (!contractStartDate || !contractEndDate) {
-      setConvertInfo("Informe o inicio e o prazo do contrato.");
+    if (!contractStartDate) {
+      setConvertInfo("Informe o inicio do contrato.");
       return;
     }
 
-    if (valorSetup <= 0 || valorRecorrencia <= 0 || diaVencimento < 1 || diaVencimento > 31) {
-      setConvertInfo("Preencha valores, vencimento e contrato validos.");
+    if (!contractEndDate) {
+      setConvertInfo("Defina o termino do contrato.");
+      return;
+    }
+
+    if (contractEndDate < contractStartDate) {
+      setConvertInfo("O termino do contrato deve ser depois do inicio.");
+      return;
+    }
+
+    const invalidFields = [];
+    if (!Number.isFinite(valorSetup) || valorSetup <= 0) invalidFields.push("setup");
+    if (!Number.isFinite(valorRecorrencia) || valorRecorrencia <= 0) invalidFields.push("recorrencia");
+    if (!Number.isFinite(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) {
+      invalidFields.push("vencimento");
+    }
+    if (invalidFields.length > 0) {
+      setConvertInfo("Preencha valores e vencimento validos.");
       return;
     }
 
@@ -525,9 +558,15 @@ export default function Leads() {
                 ))}
               </select>
               <input
-                value={contractEndDate ? toDateInputValue(contractEndDate) : ""}
-                readOnly
-                className="rounded-2xl border border-slate/20 bg-white/60 px-4 py-3 text-sm"
+                type="date"
+                value={
+                  conversion.contratoFimManual ||
+                  (contractEndDate ? toDateInputValue(contractEndDate) : "")
+                }
+                onChange={(event) =>
+                  setConversion({ ...conversion, contratoFimManual: event.target.value })
+                }
+                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
                 placeholder="Termino do contrato"
               />
             </>
@@ -577,12 +616,16 @@ export default function Leads() {
         <div className="mt-4 text-sm text-slate/70">
           <p>Resumo:</p>
           {conversion.modalidade === "unico" ? (
-            <p className="font-medium">Total: {formatCurrency(Number(conversion.valorTotal || 0))}</p>
+            <p className="font-medium">
+              Total: {formatCurrency(parseNumberInput(conversion.valorTotal))}
+            </p>
           ) : (
             <div className="space-y-1">
-              <p className="font-medium">Setup: {formatCurrency(Number(conversion.valorSetup || 0))}</p>
               <p className="font-medium">
-                Mensalidade: {formatCurrency(Number(conversion.valorRecorrencia || 0))} (Dia {conversion.diaVencimento || "-"})
+                Setup: {formatCurrency(parseNumberInput(conversion.valorSetup))}
+              </p>
+              <p className="font-medium">
+                Mensalidade: {formatCurrency(parseNumberInput(conversion.valorRecorrencia))} (Dia {conversion.diaVencimento || "-"})
               </p>
               <p className="text-xs text-slate/60">
                 Vigencia: {conversion.contratoInicio || "-"} · Termo: {CONTRACT_TERMS.find((term) => term.value === conversion.contratoTermo)?.label || "-"}
