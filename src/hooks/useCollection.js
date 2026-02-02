@@ -1,5 +1,5 @@
-﻿import { collection, getDocs, onSnapshot, orderBy, query, where } from "firebase/firestore";
-import { useEffect, useState } from "react";
+import { collection, getDocs, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
 import { db } from "../services/firebase";
 
 const isAbortError = (err) => {
@@ -12,6 +12,8 @@ const isAbortError = (err) => {
 
 export default function useCollection(collectionName, orderField = "createdAt", options = {}) {
   const { enabled = true, realtime = true, filters = [], orderDirection = "desc" } = options;
+  const filtersKey = JSON.stringify(filters);
+  const stableFilters = useMemo(() => filters, [filtersKey]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -27,8 +29,8 @@ export default function useCollection(collectionName, orderField = "createdAt", 
     let active = true;
     setLoading(true);
     const constraints = [];
-    if (Array.isArray(filters) && filters.length > 0) {
-      filters.forEach((filter) => {
+    if (Array.isArray(stableFilters) && stableFilters.length > 0) {
+      stableFilters.forEach((filter) => {
         if (!filter || filter.length < 3) return;
         const [field, op, value] = filter;
         constraints.push(where(field, op, value));
@@ -84,7 +86,7 @@ export default function useCollection(collectionName, orderField = "createdAt", 
     return () => {
       active = false;
     };
-  }, [collectionName, orderField, enabled, realtime, orderDirection, JSON.stringify(filters)]);
+  }, [collectionName, orderField, enabled, realtime, orderDirection, filtersKey, stableFilters]);
 
   return { data, loading, error };
 }

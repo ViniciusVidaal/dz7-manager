@@ -1,4 +1,4 @@
-﻿export const getPresetRange = (type) => {
+export const getPresetRange = (type) => {
   const now = new Date();
   if (type === "dia") {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());

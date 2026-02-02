@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, updateDoc, Timestamp } from "firebase/firestore";
 import { HandCoins } from "lucide-react";
 

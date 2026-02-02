@@ -1,4 +1,4 @@
-﻿export const SERVICE_OPTIONS = [
+export const SERVICE_OPTIONS = [
   "Google Meu Negocio",
   "SEO Local",
   "Trafego Pago",

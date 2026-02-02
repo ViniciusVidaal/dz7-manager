@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   addDoc,
   arrayUnion,
@@ -205,7 +205,6 @@ export default function Clients() {
                 return "Unico";
               }
               const dueDate = getNextDueDate(row.recorrenciaDia || 1);
-              const dueMonthRef = getMonthRef(dueDate);
               if (row.lastPaymentMonth === currentMonth) {
                 return "Pago mes atual";
               }

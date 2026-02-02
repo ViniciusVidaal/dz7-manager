@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 
 export default function StatCard({ title, value, hint, accent = "tide" }) {
   const accentClass =
