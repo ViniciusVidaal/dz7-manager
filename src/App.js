@@ -1,24 +1,99 @@
-import logo from './logo.svg';
-import './App.css';
+﻿import React from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+
+import Login from "./pages/Login";
+import FirstAccess from "./pages/FirstAccess";
+import Dashboard from "./pages/Dashboard";
+import Leads from "./pages/Leads";
+import Clients from "./pages/Clients";
+import Finance from "./pages/Finance";
+import Tools from "./pages/Tools";
+import Investments from "./pages/Investments";
+import Approvals from "./pages/Approvals";
+import Users from "./pages/Users";
+import Payroll from "./pages/Payroll";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/primeiro-acesso" element={<FirstAccess />} />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/leads"
+        element={
+          <ProtectedRoute>
+            <Leads />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/clientes"
+        element={
+          <ProtectedRoute>
+            <Clients />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/investimentos"
+        element={
+          <ProtectedRoute>
+            <Investments />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/financeiro"
+        element={
+          <ProtectedRoute>
+            <Finance />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/ferramentas"
+        element={
+          <ProtectedRoute>
+            <Tools />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/aprovacoes"
+        element={
+          <ProtectedRoute>
+            <Approvals />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/usuarios"
+        element={
+          <ProtectedRoute>
+            <Users />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pagamentos"
+        element={
+          <ProtectedRoute>
+            <Payroll />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 
