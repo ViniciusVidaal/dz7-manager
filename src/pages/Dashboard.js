@@ -92,7 +92,6 @@ export default function Dashboard() {
 
   const faturamento = entradas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
   const gastos = saidas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
-  const lucroBase = faturamento - gastos;
   const ferramentasMensais = isAdmin
     ? tools.reduce((acc, tool) => acc + Number(tool.valor || 0), 0)
     : 0;
