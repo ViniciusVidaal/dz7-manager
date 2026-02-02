@@ -92,7 +92,11 @@ export default function Dashboard() {
 
   const faturamento = entradas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
   const gastos = saidas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
-  const lucro = faturamento - gastos;
+  const lucroBase = faturamento - gastos;
+  const ferramentasMensais = isAdmin
+    ? tools.reduce((acc, tool) => acc + Number(tool.valor || 0), 0)
+    : 0;
+  const lucro = saldo - ferramentasMensais;
 
   const receitaPorDia = groupByDay(
     entradas.map((item) => ({ data: item.data, value: Number(item.valor || 0) })),
@@ -207,7 +211,7 @@ export default function Dashboard() {
         { title: "Saldo em caixa", value: formatCurrency(saldo), hint: "Atualizado" },
         { title: "Faturamento", value: formatCurrency(faturamento), hint: "Receitas" },
         { title: "Gastos", value: formatCurrency(gastos), hint: "Despesas", accent: "glow" },
-        { title: "Lucro", value: formatCurrency(lucro), hint: "Real" },
+        { title: "Lucro", value: formatCurrency(lucro), hint: "Caixa - ferramentas" },
         { title: "Recebiveis 30 dias", value: formatCurrency(receivableSoon), hint: "Recorrencias" },
       ]
     : [
