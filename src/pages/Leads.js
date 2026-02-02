@@ -272,13 +272,19 @@ export default function Leads() {
     }
 
     const invalidFields = [];
-    if (!Number.isFinite(valorSetup) || valorSetup <= 0) invalidFields.push("setup");
+    if (!Number.isFinite(valorSetup) || valorSetup < 0) invalidFields.push("setup");
     if (!Number.isFinite(valorRecorrencia) || valorRecorrencia <= 0) invalidFields.push("recorrencia");
     if (!Number.isFinite(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) {
       invalidFields.push("vencimento");
     }
     if (invalidFields.length > 0) {
-      setConvertInfo("Preencha valores e vencimento validos.");
+      const labels = {
+        setup: "setup",
+        recorrencia: "recorrencia",
+        vencimento: "dia de vencimento",
+      };
+      const readable = invalidFields.map((field) => labels[field] || field).join(", ");
+      setConvertInfo(`Preencha corretamente: ${readable}.`);
       return;
     }
 
