@@ -90,10 +90,25 @@ export default function Dashboard() {
   const entradas = filteredFinance.filter((item) => item.tipo === "entrada");
   const saidas = filteredFinance.filter((item) => item.tipo === "saida");
 
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const cutoffPast = new Date(startOfToday);
+  cutoffPast.setDate(cutoffPast.getDate() - 1);
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+
   const faturamento = entradas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
   const gastos = saidas.reduce((acc, item) => acc + Number(item.valor || 0), 0);
   const ferramentasMensais = isAdmin
-    ? tools.reduce((acc, tool) => acc + Number(tool.valor || 0), 0)
+    ? tools.reduce((acc, tool) => {
+        if (tool.status === "concluido") return acc;
+        const due = normalizeDate(tool.vencimento);
+        if (!due) return acc;
+        if (due > endOfMonth) return acc;
+        if (due < cutoffPast) return acc;
+        return acc + Number(tool.valor || 0);
+      }, 0)
     : 0;
   const lucro = saldo - ferramentasMensais;
 
@@ -106,16 +121,14 @@ export default function Dashboard() {
     saidas.map((item) => ({ categoria: item.categoria, valor: Number(item.valor || 0) }))
   );
 
-  const today = new Date();
-  const endOfToday = new Date();
-  endOfToday.setHours(23, 59, 59, 999);
   const currentMonthRef = getMonthRef(today);
 
   const toolDueItems = isAdmin
     ? tools.filter((tool) => {
+        if (tool.status === "concluido") return false;
         const due = normalizeDate(tool.vencimento);
         if (!due) return false;
-        return due <= endOfToday;
+        return due <= endOfToday && due >= cutoffPast;
       })
     : [];
 
@@ -210,7 +223,7 @@ export default function Dashboard() {
         { title: "Saldo em caixa", value: formatCurrency(saldo), hint: "Atualizado" },
         { title: "Faturamento", value: formatCurrency(faturamento), hint: "Receitas" },
         { title: "Gastos", value: formatCurrency(gastos), hint: "Despesas", accent: "glow" },
-        { title: "Lucro", value: formatCurrency(lucro), hint: "Caixa - ferramentas" },
+        { title: "Lucro", value: formatCurrency(lucro), hint: "Caixa - ferramentas do mes" },
         { title: "Recebiveis 30 dias", value: formatCurrency(receivableSoon), hint: "Recorrencias" },
       ]
     : [

@@ -146,7 +146,7 @@ export default function Clients() {
     const diffDays = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
     const dueMonthRef = getMonthRef(dueDate);
     if (client.lastPaymentMonth === dueMonthRef) return false;
-    return diffDays >= 0 && diffDays <= 10;
+    return diffDays >= 0 && diffDays <= 30;
   });
 
   const receivableSoon = dueSoon.reduce((acc, client) => acc + Number(client.recorrenciaValor || 0), 0);
@@ -354,7 +354,7 @@ export default function Clients() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="glass-panel rounded-3xl p-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate/60">Receber nos proximos 10 dias</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate/60">Receber nos proximos 30 dias</p>
           <h3 className="text-3xl font-display text-slate mt-3">{formatCurrency(receivableSoon)}</h3>
           <p className="text-sm text-slate/60 mt-2">{dueSoon.length} clientes recorrentes</p>
         </div>

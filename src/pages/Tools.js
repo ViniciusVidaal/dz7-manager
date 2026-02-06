@@ -25,6 +25,7 @@ const initialForm = {
   valor: "",
   vencimento: "",
   ultimos4: "",
+  tipo: "recorrente",
 };
 
 const getNextDueDate = (date) => {
@@ -47,7 +48,17 @@ export default function Tools() {
   const [editing, setEditing] = useState(null);
   const [info, setInfo] = useState("");
 
-  const rows = tools;
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const cutoffPast = new Date(startOfToday);
+  cutoffPast.setDate(cutoffPast.getDate() - 1);
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+  const rows = tools.filter((tool) => {
+    if (tool.status === "concluido") return false;
+    const due = normalizeDate(tool.vencimento);
+    if (!due) return false;
+    return due <= endOfMonth && due >= cutoffPast;
+  });
 
   const openCreate = () => {
     setForm(initialForm);
@@ -62,6 +73,7 @@ export default function Tools() {
       valor: item.valor,
       vencimento: toDateInputValue(normalizeDate(item.vencimento)),
       ultimos4: item.ultimos4 || "",
+      tipo: item.tipo === "unico" ? "unico" : "recorrente",
     });
     setEditing(item);
     setInfo("");
@@ -84,11 +96,13 @@ export default function Tools() {
       valor: Number(form.valor || 0),
       vencimento: Timestamp.fromDate(vencimentoDate),
       ultimos4: form.ultimos4,
+      tipo: form.tipo === "unico" ? "unico" : "recorrente",
     };
 
     if (!editing) {
       await addDoc(collection(db, "tools"), {
         ...payload,
+        status: "ativo",
         createdAt: serverTimestamp(),
       });
       setOpen(false);
@@ -108,6 +122,10 @@ export default function Tools() {
 
   const handlePaid = async (item) => {
     if (!isAdmin) return;
+    if (item.status === "concluido") {
+      setInfo("Este pagamento ja foi concluido.");
+      return;
+    }
     const vencimentoDate = normalizeDate(item.vencimento);
     if (!vencimentoDate) {
       setInfo("Vencimento invalido.");
@@ -137,10 +155,19 @@ export default function Tools() {
       createdAt: serverTimestamp(),
     });
 
-    const nextDue = getNextDueDate(vencimentoDate);
     await updateDoc(doc(db, "tools", item.id), {
       lastPaidAt: serverTimestamp(),
-      vencimento: nextDue ? Timestamp.fromDate(nextDue) : item.vencimento,
+      ...(item.tipo === "unico"
+        ? {
+            status: "concluido",
+            paidAt: serverTimestamp(),
+          }
+        : {
+            vencimento: (() => {
+              const nextDue = getNextDueDate(vencimentoDate);
+              return nextDue ? Timestamp.fromDate(nextDue) : item.vencimento;
+            })(),
+          }),
       updatedAt: serverTimestamp(),
     });
   };
@@ -169,10 +196,18 @@ export default function Tools() {
           Nova ferramenta
         </button>
       </div>
+      <p className="text-xs text-slate/60 mb-4">
+        Exibindo vencimentos ate o fim do mes atual e ate 1 dia apos vencer.
+      </p>
 
       <DataTable
         columns={[
           { key: "nome", label: "Nome" },
+          {
+            key: "tipo",
+            label: "Tipo",
+            render: (row) => (row.tipo === "unico" ? "Unico" : "Recorrente"),
+          },
           {
             key: "valor",
             label: "Valor",
@@ -187,6 +222,7 @@ export default function Tools() {
             key: "status",
             label: "Status",
             render: (row) => {
+              if (row.status === "concluido") return "Pago";
               const due = normalizeDate(row.vencimento);
               if (!due) return "Sem vencimento";
               const endOfToday = new Date();
@@ -223,7 +259,7 @@ export default function Tools() {
           },
         ]}
         rows={rows}
-        empty="Nenhuma ferramenta registrada."
+        empty="Nenhuma ferramenta para este mes."
       />
 
       <Modal
@@ -254,6 +290,14 @@ export default function Tools() {
             className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
             placeholder="Nome"
           />
+          <select
+            value={form.tipo}
+            onChange={(event) => setForm({ ...form, tipo: event.target.value })}
+            className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+          >
+            <option value="recorrente">Pagamento recorrente</option>
+            <option value="unico">Pagamento unico</option>
+          </select>
           <input
             type="number"
             value={form.valor}
