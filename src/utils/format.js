@@ -12,6 +12,13 @@ export const formatDate = (date) => {
   return d.toLocaleDateString("pt-BR");
 };
 
+export const formatDayMonth = (date) => {
+  if (!date) return "-";
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+};
+
 export const toDateInputValue = (date) => {
   if (!date) return "";
   const d = date instanceof Date ? date : new Date(date);

@@ -12,6 +12,7 @@ import Investments from "./pages/Investments";
 import Approvals from "./pages/Approvals";
 import Users from "./pages/Users";
 import Payroll from "./pages/Payroll";
+import Goals from "./pages/Goals";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
@@ -56,6 +57,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Finance />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/metas"
+        element={
+          <ProtectedRoute>
+            <Goals />
           </ProtectedRoute>
         }
       />

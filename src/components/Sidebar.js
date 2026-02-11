@@ -10,12 +10,14 @@ import {
   HandCoins,
   LayoutGrid,
   Settings,
+  Target,
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGrid },
+  { to: "/metas", label: "Metas", icon: Target, adminOnly: true },
   { to: "/leads", label: "Leads", icon: ClipboardList },
   { to: "/clientes", label: "Clientes", icon: Briefcase },
   { to: "/investimentos", label: "Investimentos", icon: Activity },

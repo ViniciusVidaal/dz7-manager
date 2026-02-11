@@ -19,10 +19,18 @@ import Modal from "../components/Modal";
 import useCollection from "../hooks/useCollection";
 import { db } from "../services/firebase";
 import { useAuth } from "../context/AuthContext";
-import { formatCurrency, formatDate, getMonthRef, parseDateInput, toDateInputValue } from "../utils/format";
+import {
+  formatCurrency,
+  formatDate,
+  formatDayMonth,
+  getMonthRef,
+  parseDateInput,
+  toDateInputValue,
+} from "../utils/format";
 import { normalizeDate } from "../utils/filters";
 import { requestApproval } from "../utils/approvals";
 import { SERVICE_OPTIONS } from "../utils/constants";
+import { getNextRecurringDate } from "../utils/recurrence";
 
 const initialForm = {
   nome: "",
@@ -33,41 +41,9 @@ const initialForm = {
   valorTotal: "",
   setupValor: "",
   recorrenciaValor: "",
-  recorrenciaDia: "",
+  recorrenciaData: "",
   contratoInicio: "",
-  contratoTermo: "30dias",
-  contratoFimManual: "",
-};
-
-const CONTRACT_TERMS = [
-  { value: "30dias", label: "30 dias" },
-  { value: "1mes", label: "1 mes" },
-  { value: "3meses", label: "3 meses" },
-  { value: "6meses", label: "6 meses" },
-];
-
-const addMonths = (date, months) => {
-  if (!date) return null;
-  const year = date.getFullYear();
-  const month = date.getMonth();
-  const day = date.getDate();
-  const targetMonth = month + months;
-  const lastDay = new Date(year, targetMonth + 1, 0).getDate();
-  const safeDay = Math.min(day, lastDay);
-  return new Date(year, targetMonth, safeDay);
-};
-
-const getContractEnd = (startDate, term) => {
-  if (!startDate) return null;
-  if (term === "30dias") {
-    const end = new Date(startDate);
-    end.setDate(end.getDate() + 30);
-    return end;
-  }
-  if (term === "1mes") return addMonths(startDate, 1);
-  if (term === "3meses") return addMonths(startDate, 3);
-  if (term === "6meses") return addMonths(startDate, 6);
-  return addMonths(startDate, 1);
+  contratoFim: "",
 };
 
 const parseNumberInput = (value) => {
@@ -81,23 +57,6 @@ const parseNumberInput = (value) => {
   return Number(normalized);
 };
 
-const getDueDateForMonth = (year, month, day) => {
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const safeDay = Math.min(day, lastDay);
-  return new Date(year, month, safeDay);
-};
-
-const getNextDueDate = (day) => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const todayStart = new Date(year, month, now.getDate());
-  const thisMonthDue = getDueDateForMonth(year, month, day);
-  if (thisMonthDue >= todayStart) {
-    return thisMonthDue;
-  }
-  return getDueDateForMonth(year, month + 1, day);
-};
 
 export default function Clients() {
   const { data: clients } = useCollection("clients", "createdAt");
@@ -117,15 +76,10 @@ export default function Clients() {
     () => parseDateInput(form.contratoInicio),
     [form.contratoInicio]
   );
-  const autoEndDate = useMemo(
-    () => getContractEnd(contractStartDate, form.contratoTermo),
-    [contractStartDate, form.contratoTermo]
+  const contractEndDate = useMemo(
+    () => parseDateInput(form.contratoFim),
+    [form.contratoFim]
   );
-  const manualEndDate = useMemo(
-    () => parseDateInput(form.contratoFimManual),
-    [form.contratoFimManual]
-  );
-  const contractEndDate = manualEndDate || autoEndDate;
 
   const recurringClients = useMemo(
     () => clients.filter((client) => client.tipo_contrato === "recorrente"),
@@ -133,27 +87,29 @@ export default function Clients() {
   );
 
   const dueToday = recurringClients.filter((client) => {
-    if (!client.recorrenciaDia) return false;
-    const dueDate = getNextDueDate(client.recorrenciaDia);
+    const dueDate = getNextRecurringDate(client, now);
+    if (!dueDate) return false;
     const dueMonthRef = getMonthRef(dueDate);
     if (client.lastPaymentMonth === dueMonthRef) return false;
     return dueDate.toDateString() === now.toDateString();
   });
 
   const dueSoon = recurringClients.filter((client) => {
-    if (!client.recorrenciaDia) return false;
-    const dueDate = getNextDueDate(client.recorrenciaDia);
+    const dueDate = getNextRecurringDate(client, now);
+    if (!dueDate) return false;
     const diffDays = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
     const dueMonthRef = getMonthRef(dueDate);
     if (client.lastPaymentMonth === dueMonthRef) return false;
+    if (dueMonthRef !== currentMonth) return false;
     return diffDays >= 0 && diffDays <= 30;
   });
 
   const receivableSoon = dueSoon.reduce((acc, client) => acc + Number(client.recorrenciaValor || 0), 0);
 
   const handleConfirm = async (client) => {
-    if (!client.recorrenciaValor || !client.recorrenciaDia) return;
-    const dueDate = getNextDueDate(client.recorrenciaDia);
+    if (!client.recorrenciaValor) return;
+    const dueDate = getNextRecurringDate(client, now);
+    if (!dueDate) return;
     const dueMonthRef = getMonthRef(dueDate);
     if (dueMonthRef !== currentMonth) {
       return;
@@ -204,12 +160,8 @@ export default function Clients() {
   const openEdit = (client) => {
     const startDate = normalizeDate(client.contratoInicio);
     const endDate = normalizeDate(client.contratoFim);
-    const term = client.contratoTermo || "30dias";
-    const autoEnd = getContractEnd(startDate, term);
-    const manualEnd =
-      startDate && endDate && autoEnd && endDate.getTime() !== autoEnd.getTime()
-        ? toDateInputValue(endDate)
-        : "";
+    const recurrenceBase = normalizeDate(client.recorrenciaData);
+    const fallbackRecurrence = recurrenceBase || getNextRecurringDate(client, now);
 
     setForm({
       nome: client.nome || "",
@@ -220,10 +172,9 @@ export default function Clients() {
       valorTotal: client.valor_total ?? "",
       setupValor: client.setupValor ?? "",
       recorrenciaValor: client.recorrenciaValor ?? "",
-      recorrenciaDia: client.recorrenciaDia ?? "",
+      recorrenciaData: fallbackRecurrence ? toDateInputValue(fallbackRecurrence) : "",
       contratoInicio: startDate ? toDateInputValue(startDate) : "",
-      contratoTermo: term,
-      contratoFimManual: manualEnd,
+      contratoFim: endDate ? toDateInputValue(endDate) : "",
     });
     setEditing(client);
     setEditInfo("");
@@ -276,7 +227,7 @@ export default function Clients() {
 
     const valorSetup = parseNumberInput(form.setupValor);
     const valorRecorrencia = parseNumberInput(form.recorrenciaValor);
-    const diaVencimento = Number(form.recorrenciaDia || 0);
+    const recorrenciaDate = parseDateInput(form.recorrenciaData);
 
     if (!contractStartDate) {
       setEditInfo("Informe o inicio do contrato.");
@@ -293,17 +244,18 @@ export default function Clients() {
       return;
     }
 
+    if (!recorrenciaDate) {
+      setEditInfo("Informe a data da recorrencia.");
+      return;
+    }
+
     const invalidFields = [];
     if (!Number.isFinite(valorSetup) || valorSetup < 0) invalidFields.push("setup");
     if (!Number.isFinite(valorRecorrencia) || valorRecorrencia <= 0) invalidFields.push("recorrencia");
-    if (!Number.isFinite(diaVencimento) || diaVencimento < 1 || diaVencimento > 31) {
-      invalidFields.push("vencimento");
-    }
     if (invalidFields.length > 0) {
       const labels = {
         setup: "setup",
         recorrencia: "recorrencia",
-        vencimento: "dia de vencimento",
       };
       const readable = invalidFields.map((field) => labels[field] || field).join(", ");
       setEditInfo(`Preencha corretamente: ${readable}.`);
@@ -314,9 +266,9 @@ export default function Clients() {
       ...baseData,
       setupValor: valorSetup,
       recorrenciaValor: valorRecorrencia,
-      recorrenciaDia: diaVencimento,
+      recorrenciaData: Timestamp.fromDate(recorrenciaDate),
+      recorrenciaDia: recorrenciaDate.getDate(),
       contratoInicio: Timestamp.fromDate(contractStartDate),
-      contratoTermo: form.contratoTermo,
       contratoFim: Timestamp.fromDate(contractEndDate),
     };
 
@@ -408,10 +360,12 @@ export default function Clients() {
           {
             key: "recorrencia",
             label: "Recorrencia",
-            render: (row) =>
-              row.tipo_contrato === "recorrente"
-                ? `${formatCurrency(row.recorrenciaValor)} (Dia ${row.recorrenciaDia || "-"})`
-                : "Pagamento unico",
+            render: (row) => {
+              if (row.tipo_contrato !== "recorrente") {
+                return "Pagamento unico";
+              }
+              return formatCurrency(row.recorrenciaValor);
+            },
           },
           {
             key: "status",
@@ -420,18 +374,22 @@ export default function Clients() {
               if (row.tipo_contrato !== "recorrente") {
                 return "Unico";
               }
-              const dueDate = getNextDueDate(row.recorrenciaDia || 1);
-              if (row.lastPaymentMonth === currentMonth) {
+              const dueDate = getNextRecurringDate(row, now);
+              if (!dueDate) {
+                return "Sem vencimento";
+              }
+              const dueMonthRef = getMonthRef(dueDate);
+              if (row.lastPaymentMonth === dueMonthRef) {
                 return "Pago mes atual";
               }
-              return `A vencer dia ${dueDate.getDate()}`;
+              return `A vencer ${formatDayMonth(dueDate)}`;
             },
           },
           {
             key: "acoes",
             label: "Acoes",
             render: (row) => {
-              const dueDate = row.recorrenciaDia ? getNextDueDate(row.recorrenciaDia) : null;
+              const dueDate = getNextRecurringDate(row, now);
               const dueMonthRef = dueDate ? getMonthRef(dueDate) : "";
               const canConfirm =
                 isAdmin &&
@@ -497,7 +455,7 @@ export default function Clients() {
               <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Recorrencia</p>
               <p>
                 {selected?.tipo_contrato === "recorrente"
-                  ? `${formatCurrency(selected?.recorrenciaValor)} (Dia ${selected?.recorrenciaDia || "-"})`
+                  ? formatCurrency(selected?.recorrenciaValor)
                   : "Pagamento unico"}
               </p>
             </div>
@@ -651,13 +609,11 @@ export default function Clients() {
                 placeholder="Valor recorrencia"
               />
               <input
-                type="number"
-                value={form.recorrenciaDia}
-                onChange={(event) => setForm({ ...form, recorrenciaDia: event.target.value })}
+                type="date"
+                value={form.recorrenciaData}
+                onChange={(event) => setForm({ ...form, recorrenciaData: event.target.value })}
                 className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Dia de vencimento (1-31)"
-                min="1"
-                max="31"
+                placeholder="Data da recorrencia"
               />
               <input
                 type="date"
@@ -666,25 +622,10 @@ export default function Clients() {
                 className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
                 placeholder="Inicio do contrato"
               />
-              <select
-                value={form.contratoTermo}
-                onChange={(event) => setForm({ ...form, contratoTermo: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-              >
-                {CONTRACT_TERMS.map((term) => (
-                  <option key={term.value} value={term.value}>
-                    {term.label}
-                  </option>
-                ))}
-              </select>
               <input
                 type="date"
-                value={
-                  form.contratoFimManual || (contractEndDate ? toDateInputValue(contractEndDate) : "")
-                }
-                onChange={(event) =>
-                  setForm({ ...form, contratoFimManual: event.target.value })
-                }
+                value={form.contratoFim}
+                onChange={(event) => setForm({ ...form, contratoFim: event.target.value })}
                 className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
                 placeholder="Termino do contrato"
               />

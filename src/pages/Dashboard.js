@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import {
   LineChart,
   Line,
@@ -9,7 +10,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { Bell, Filter } from "lucide-react";
+import { Bell, Filter, X } from "lucide-react";
 
 import Layout from "../components/Layout";
 import Topbar from "../components/Topbar";
@@ -17,6 +18,7 @@ import StatCard from "../components/StatCard";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import useCollection from "../hooks/useCollection";
+import { db } from "../services/firebase";
 import { useAuth } from "../context/AuthContext";
 import { formatCurrency, formatDate, getMonthRef, parseDateInput } from "../utils/format";
 import {
@@ -26,14 +28,9 @@ import {
   groupExpensesByCategory,
   normalizeDate,
 } from "../utils/filters";
+import { getDueDateForMonthRef, getNextRecurringDate } from "../utils/recurrence";
 
 const PIE_COLORS = ["#0f766e", "#f59e0b", "#1f2937", "#4b5563"];
-
-const getDueDateForMonth = (year, month, day) => {
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const safeDay = Math.min(day, lastDay);
-  return new Date(year, month, safeDay);
-};
 
 const parseDateKey = (label) => {
   if (!label) return null;
@@ -72,6 +69,7 @@ export default function Dashboard() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [toolAlertOpen, setToolAlertOpen] = useState(false);
   const [toolAlertDismissed, setToolAlertDismissed] = useState(false);
+  const [dismissedNotifications, setDismissedNotifications] = useState([]);
 
   const range = useMemo(() => {
     if (rangeType === "intervalo") {
@@ -91,6 +89,10 @@ export default function Dashboard() {
   const saidas = filteredFinance.filter((item) => item.tipo === "saida");
 
   const today = new Date();
+  const dayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+    today.getDate()
+  ).padStart(2, "0")}`;
+  const dismissedStorageKey = `dismissedNotifications:${dayKey}`;
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const cutoffPast = new Date(startOfToday);
   cutoffPast.setDate(cutoffPast.getDate() - 1);
@@ -128,22 +130,17 @@ export default function Dashboard() {
         if (tool.status === "concluido") return false;
         const due = normalizeDate(tool.vencimento);
         if (!due) return false;
-        return due <= endOfToday && due >= cutoffPast;
+        return due >= startOfToday && due <= endOfToday;
       })
     : [];
-
-  const previousMonthRef = getMonthRef(new Date(today.getFullYear(), today.getMonth() - 1, 1));
 
   const clientDueItems = isAdmin
     ? clients.filter((client) => {
         if (client.tipo_contrato !== "recorrente") return false;
-        if (!client.recorrenciaDia) return false;
+        const dueDate = getDueDateForMonthRef(client, currentMonthRef);
+        if (!dueDate) return false;
         if (client.lastPaymentMonth === currentMonthRef) return false;
-        const dueDate = getDueDateForMonth(today.getFullYear(), today.getMonth(), client.recorrenciaDia);
-        const lastRef = client.lastPaymentMonth || "";
-        const isBehind = lastRef && lastRef < previousMonthRef;
-        if (isBehind) return true;
-        return dueDate <= endOfToday;
+        return dueDate >= startOfToday && dueDate <= endOfToday;
       })
     : [];
 
@@ -165,6 +162,8 @@ export default function Dashboard() {
       title: `Contrato vence amanha: ${item.clientName || "Cliente"}`,
       subtitle: `Vencimento em ${formatDate(normalizeDate(item.endDate))}`,
       type: "contract",
+      source: "notifications",
+      sourceId: item.id,
     })),
     ...(isAdmin
       ? [
@@ -173,24 +172,69 @@ export default function Dashboard() {
             title: `Ferramenta: ${tool.nome || "Sem nome"}`,
             subtitle: `Venceu em ${formatDate(normalizeDate(tool.vencimento))}`,
             type: "tool",
+            source: "tools",
+            sourceId: tool.id,
           })),
           ...clientDueItems.map((client) => ({
             id: `client-${client.id}`,
             title: `Mensalidade: ${client.nome || "Cliente"}`,
             subtitle: `Venceu em ${formatDate(
-              getDueDateForMonth(today.getFullYear(), today.getMonth(), client.recorrenciaDia)
+              getDueDateForMonthRef(client, currentMonthRef) || getNextRecurringDate(client, today)
             )}`,
             type: "client",
+            source: "clients",
+            sourceId: client.id,
           })),
           ...pendingInvestmentApprovals.map((approval) => ({
             id: `approval-${approval.id}`,
-            title: `Investimento: ${approval.proposedData?.nome || approval.originalData?.nome || "Solicitacao"}`,
+            title: `Investimento: ${
+              approval.proposedData?.nome || approval.originalData?.nome || "Solicitacao"
+            }`,
             subtitle: `Solicitado por ${approval.requestedByName || "Equipe"}`,
             type: "approval",
+            source: "approvals",
+            sourceId: approval.id,
           })),
         ]
       : []),
-  ];
+  ].filter((item) => !dismissedNotifications.includes(item.id));
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(dismissedStorageKey) || "[]");
+      if (Array.isArray(stored)) {
+        setDismissedNotifications(stored);
+      } else {
+        setDismissedNotifications([]);
+      }
+    } catch {
+      setDismissedNotifications([]);
+    }
+  }, [dismissedStorageKey]);
+
+  const handleDismissNotification = async (item) => {
+    setDismissedNotifications((prev) => {
+      if (prev.includes(item.id)) return prev;
+      const next = [...prev, item.id];
+      try {
+        localStorage.setItem(dismissedStorageKey, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+
+    if (item.source === "notifications" && item.sourceId) {
+      try {
+        await updateDoc(doc(db, "notifications", item.sourceId), {
+          status: "concluido",
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        // Silencioso: evita travar a UI caso falhe a permissao.
+      }
+    }
+  };
 
   useEffect(() => {
     if (toolAlertDismissed) return;
@@ -205,15 +249,13 @@ export default function Dashboard() {
 
   const receivableSoon = isAdmin
     ? recurringClients.reduce((acc, client) => {
-        if (!client.recorrenciaDia) return acc;
-        if (client.lastPaymentMonth === currentMonthRef) return acc;
-        const dueDate = getDueDateForMonth(
-          today.getFullYear(),
-          today.getMonth(),
-          client.recorrenciaDia
-        );
+        const dueDate = getNextRecurringDate(client, today);
+        if (!dueDate) return acc;
+        const dueMonthRef = getMonthRef(dueDate);
+        if (dueMonthRef !== currentMonthRef) return acc;
+        if (client.lastPaymentMonth === dueMonthRef) return acc;
         const diffDays = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-        if (diffDays > 30) return acc;
+        if (diffDays < 0 || diffDays > 30) return acc;
         return acc + Number(client.recorrenciaValor || 0);
       }, 0)
     : 0;
@@ -279,10 +321,19 @@ export default function Dashboard() {
                   {allDueNotifications.map((item) => (
                     <div
                       key={item.id}
-                      className="flex flex-col gap-1 rounded-xl border border-slate/10 bg-white/70 px-3 py-2"
+                      className="flex items-start justify-between gap-3 rounded-xl border border-slate/10 bg-white/70 px-3 py-2"
                     >
-                      <span className="text-sm text-slate">{item.title}</span>
-                      <span className="text-xs text-slate/60">{item.subtitle}</span>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm text-slate">{item.title}</span>
+                        <span className="text-xs text-slate/60">{item.subtitle}</span>
+                      </div>
+                      <button
+                        onClick={() => handleDismissNotification(item)}
+                        className="rounded-full p-1 text-slate/50 hover:text-slate"
+                        aria-label="Fechar notificacao"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   ))}
                 </div>
