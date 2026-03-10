@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Configuração do Firebase para o projeto dz7-manager-a1c9b 
+// Configuracao do Firebase para o projeto dz7-manager-a1c9b
 const firebaseConfig = {
   apiKey: "AIzaSyD7C6ED0_eq2bu-rjXnSHu-zkYulI8yEFg",
   authDomain: "dz7-manager-a1c9b.firebaseapp.com",
@@ -10,13 +10,13 @@ const firebaseConfig = {
   storageBucket: "dz7-manager-a1c9b.firebasestorage.app",
   messagingSenderId: "630585156738",
   appId: "1:630585156738:web:0ff1d924b2434243a3409b",
-  measurementId: "G-8HDL0MS97H"
+  measurementId: "G-8HDL0MS97H",
 };
 
 // Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
 
-// Exporta os serviços para usar no sistema
+// Exporta os servicos para usar no sistema
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export default app;

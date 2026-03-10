@@ -14,12 +14,13 @@ import {
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
+import brandLogo from "../assets/logocerta.png";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGrid },
   { to: "/metas", label: "Metas", icon: Target, adminOnly: true },
   { to: "/leads", label: "Leads", icon: ClipboardList },
-  { to: "/clientes", label: "Clientes", icon: Briefcase },
+  { to: "/clientes", label: "Clientes", icon: Briefcase, adminOnly: true },
   { to: "/investimentos", label: "Investimentos", icon: Activity },
   { to: "/financeiro", label: "Financeiro", icon: DollarSign, adminOnly: true },
   { to: "/ferramentas", label: "Ferramentas", icon: CreditCard, adminOnly: true },
@@ -36,8 +37,12 @@ export default function Sidebar({ className = "", onNavigate }) {
     <aside
       className={`w-72 bg-gradient-to-b from-[#0b1015] via-[#0f1720] to-[#0b1015] text-white flex flex-col p-6 gap-8 border-r border-white/10 ${className}`}
     >
-      <div className="space-y-3">
-        <h1 className="font-display text-xl">Dz7 Marketing</h1>
+      <div className="space-y-4">
+        <img
+          src={brandLogo}
+          alt="Dz7 Marketing"
+          className="h-12 w-auto max-w-[220px] object-contain"
+        />
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-white/40">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
           Online

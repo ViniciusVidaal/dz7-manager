@@ -37,7 +37,7 @@ export default function Layout({ children }) {
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute -top-24 -right-28 h-96 w-96 rounded-full bg-tide/15 blur-[140px]" />
           <div className="absolute bottom-0 left-10 h-80 w-80 rounded-full bg-glow/15 blur-[140px]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,118,110,0.08),transparent_55%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(25,182,224,0.12),transparent_55%)]" />
         </div>
         <div className="relative z-10">{children}</div>
       </main>

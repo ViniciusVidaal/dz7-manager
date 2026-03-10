@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import {
-  LineChart,
-  Line,
+  BarChart,
+  Bar,
+  CartesianGrid,
   XAxis,
+  YAxis,
   ResponsiveContainer,
   Tooltip,
   PieChart,
@@ -24,19 +26,13 @@ import { formatCurrency, formatDate, getMonthRef, parseDateInput } from "../util
 import {
   filterByRange,
   getPresetRange,
-  groupByDay,
   groupExpensesByCategory,
   normalizeDate,
 } from "../utils/filters";
 import { getDueDateForMonthRef, getNextRecurringDate } from "../utils/recurrence";
 
-const PIE_COLORS = ["#0f766e", "#f59e0b", "#1f2937", "#4b5563"];
-
-const parseDateKey = (label) => {
-  if (!label) return null;
-  const parsed = parseDateInput(label);
-  return parsed || null;
-};
+const PIE_COLORS = ["#19b6e0", "#74d8f2", "#0f4c5c", "#1f2937"];
+const WEEKDAY_LABELS = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"];
 
 const isSameDay = (a, b) => {
   if (!a || !b) return false;
@@ -114,10 +110,20 @@ export default function Dashboard() {
     : 0;
   const lucro = saldo - ferramentasMensais;
 
-  const receitaPorDia = groupByDay(
-    entradas.map((item) => ({ data: item.data, value: Number(item.valor || 0) })),
-    "data"
-  );
+  const receitaPorSemana = useMemo(() => {
+    const totals = WEEKDAY_LABELS.map(() => 0);
+    entradas.forEach((item) => {
+      const date = normalizeDate(item.data);
+      if (!date) return;
+      const weekday = date.getDay();
+      const weekdayIndex = weekday === 0 ? 6 : weekday - 1;
+      totals[weekdayIndex] += Number(item.valor || 0);
+    });
+    return WEEKDAY_LABELS.map((label, index) => ({
+      weekday: label,
+      value: totals[index],
+    }));
+  }, [entradas]);
 
   const despesasPorCategoria = groupExpensesByCategory(
     saidas.map((item) => ({ categoria: item.categoria, valor: Number(item.valor || 0) }))
@@ -391,24 +397,26 @@ export default function Dashboard() {
           <div className="glass-panel rounded-3xl p-6 xl:col-span-2 min-w-0">
             <div className="flex items-center justify-between">
               <h3 className="text-sm uppercase tracking-[0.2em] text-slate/60">Evolucao de faturamento</h3>
-              <span className="text-xs text-slate/50">Receitas por dia</span>
+              <span className="text-xs text-slate/50">Receitas confirmadas por dia da semana</span>
             </div>
             <div className="mt-6 min-h-[260px] min-w-[280px]">
               <ResponsiveContainer width="100%" height={260} minHeight={260} minWidth={280}>
-                <LineChart data={receitaPorDia}>
-                  <XAxis dataKey="date" hide />
+                <BarChart data={receitaPorSemana} barCategoryGap="35%">
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
+                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} interval={0} />
+                  <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip
                     formatter={(value) => formatCurrency(value)}
-                    labelFormatter={(label) => formatDate(parseDateKey(label))}
+                    labelFormatter={(label) => `Dia: ${label}`}
                   />
-                  <Line
-                    type="monotone"
+                  <Bar
                     dataKey="value"
-                    stroke="#0f766e"
-                    strokeWidth={3}
-                    dot={{ r: 4 }}
+                    stroke="#19b6e0"
+                    fill="#19b6e0"
+                    radius={[8, 8, 0, 0]}
+                    barSize={12}
                   />
-                </LineChart>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>

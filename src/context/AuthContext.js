@@ -56,6 +56,7 @@ export function AuthProvider({ children }) {
             email: firebaseUser.email || "",
             role: "admin",
             cargo: "Admin",
+            assignedProfiles: [],
             primeiroAcesso: false,
             createdAt: serverTimestamp(),
           };
@@ -114,6 +115,7 @@ export function AuthProvider({ children }) {
       email,
       role,
       cargo,
+      assignedProfiles: [],
       primeiroAcesso: true,
       createdAt: serverTimestamp(),
     });

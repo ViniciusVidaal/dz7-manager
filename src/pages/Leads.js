@@ -2,8 +2,10 @@ import React, { useMemo, useState } from "react";
 import {
   addDoc,
   collection,
+  deleteField,
   deleteDoc,
   doc,
+  getDoc,
   serverTimestamp,
   updateDoc,
   Timestamp,
@@ -31,10 +33,15 @@ const initialForm = {
 
 const initialConversion = {
   modalidade: "unico",
+  formaValorInicial: "integral",
   valorTotal: "",
-  valorSetup: "",
+  valorInicialTotal: "",
+  valorInicialPago: "",
+  valorInicialSegundaData: "",
   valorRecorrencia: "",
   recorrenciaData: "",
+  contratoInicio: "",
+  contratoFim: "",
   servicos: [],
 };
 
@@ -62,9 +69,39 @@ export default function Leads() {
   const [convertLead, setConvertLead] = useState(null);
   const [conversion, setConversion] = useState(initialConversion);
   const [convertInfo, setConvertInfo] = useState("");
+
   const recurrenceDate = useMemo(
     () => parseDateInput(conversion.recorrenciaData),
     [conversion.recorrenciaData]
+  );
+  const contractStartDate = useMemo(
+    () => parseDateInput(conversion.contratoInicio),
+    [conversion.contratoInicio]
+  );
+  const contractEndDate = useMemo(
+    () => parseDateInput(conversion.contratoFim),
+    [conversion.contratoFim]
+  );
+  const secondInitialDate = useMemo(
+    () => parseDateInput(conversion.valorInicialSegundaData),
+    [conversion.valorInicialSegundaData]
+  );
+  const isValorInicialParcial = conversion.formaValorInicial === "parcial";
+  const valorInicialTotal = useMemo(
+    () => parseNumberInput(conversion.valorInicialTotal),
+    [conversion.valorInicialTotal]
+  );
+  const valorInicialPagoInput = useMemo(
+    () => parseNumberInput(conversion.valorInicialPago),
+    [conversion.valorInicialPago]
+  );
+  const valorInicialPago = useMemo(
+    () => (isValorInicialParcial ? valorInicialPagoInput : valorInicialTotal),
+    [isValorInicialParcial, valorInicialPagoInput, valorInicialTotal]
+  );
+  const valorInicialPendente = useMemo(
+    () => Math.max(0, valorInicialTotal - valorInicialPago),
+    [valorInicialTotal, valorInicialPago]
   );
 
   const canCreate = isAdmin || profile?.role === "funcionario";
@@ -141,9 +178,25 @@ export default function Leads() {
     setInfo("Solicitacao enviada para aprovacao.");
   };
 
-  const handleDelete = async (leadId) => {
+  const handleDelete = async (lead) => {
     if (!isAdmin) return;
-    await deleteDoc(doc(db, "leads", leadId));
+    const confirmed = window.confirm(`Excluir ${lead?.nome || "lead"}?`);
+    if (!confirmed) return;
+    try {
+      if (lead?.clientId) {
+        const clientRef = doc(db, "clients", lead.clientId);
+        const clientSnapshot = await getDoc(clientRef);
+        if (clientSnapshot.exists()) {
+          await updateDoc(clientRef, {
+            leadId: deleteField(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+      await deleteDoc(doc(db, "leads", lead.id));
+    } catch (error) {
+      window.alert("Nao foi possivel excluir o lead agora.");
+    }
   };
 
   const handleConvert = async () => {
@@ -211,55 +264,127 @@ export default function Leads() {
       return;
     }
 
-    const valorSetup = parseNumberInput(conversion.valorSetup);
+    const valorInicialTotalValue = parseNumberInput(conversion.valorInicialTotal);
+    const valorInicialPagoBase = parseNumberInput(conversion.valorInicialPago);
+    const valorInicialPagoValue =
+      conversion.formaValorInicial === "parcial" ? valorInicialPagoBase : valorInicialTotalValue;
     const valorRecorrencia = parseNumberInput(conversion.valorRecorrencia);
     const recorrenciaDate = parseDateInput(conversion.recorrenciaData);
+    const contratoInicioDate = parseDateInput(conversion.contratoInicio);
+    const contratoFimDate = parseDateInput(conversion.contratoFim);
+    const segundaParcelaDate =
+      conversion.formaValorInicial === "parcial"
+        ? parseDateInput(conversion.valorInicialSegundaData)
+        : null;
+    const valorInicialRestante = Math.max(0, valorInicialTotalValue - valorInicialPagoValue);
 
     if (!recorrenciaDate) {
       setConvertInfo("Informe a data da recorrencia.");
       return;
     }
 
+    if (!contratoInicioDate) {
+      setConvertInfo("Informe a data de inicio do contrato.");
+      return;
+    }
+
+    if (!contratoFimDate) {
+      setConvertInfo("Informe a data final do contrato.");
+      return;
+    }
+
+    if (contratoFimDate < contratoInicioDate) {
+      setConvertInfo("A data final do contrato deve ser depois da data de inicio.");
+      return;
+    }
+
+    if (recorrenciaDate < contratoInicioDate) {
+      setConvertInfo("A recorrencia deve iniciar a partir da data de inicio do contrato.");
+      return;
+    }
+
+    if (recorrenciaDate > contratoFimDate) {
+      setConvertInfo("A recorrencia nao pode iniciar depois da data final do contrato.");
+      return;
+    }
+
+    if (segundaParcelaDate && segundaParcelaDate > contratoFimDate) {
+      setConvertInfo("A segunda parcela do valor inicial nao pode passar da data final do contrato.");
+      return;
+    }
+
     const invalidFields = [];
-    if (!Number.isFinite(valorSetup) || valorSetup < 0) invalidFields.push("setup");
+    if (!Number.isFinite(valorInicialTotalValue) || valorInicialTotalValue < 0) {
+      invalidFields.push("valor_inicial");
+    }
+    if (!Number.isFinite(valorInicialPagoValue) || valorInicialPagoValue < 0) {
+      invalidFields.push("valor_inicial_pago");
+    }
+    if (conversion.formaValorInicial === "parcial") {
+      if (valorInicialTotalValue <= 0) invalidFields.push("valor_inicial");
+      if (!Number.isFinite(valorInicialPagoBase) || valorInicialPagoBase <= 0) {
+        invalidFields.push("valor_inicial_pago");
+      }
+      if (valorInicialPagoBase >= valorInicialTotalValue) {
+        invalidFields.push("valor_inicial_pago");
+      }
+    }
     if (!Number.isFinite(valorRecorrencia) || valorRecorrencia <= 0) invalidFields.push("recorrencia");
+    if (conversion.formaValorInicial === "parcial" && !segundaParcelaDate) {
+      invalidFields.push("segunda_parcela_data");
+    }
     if (invalidFields.length > 0) {
       const labels = {
-        setup: "setup",
+        valor_inicial: "valor inicial",
+        valor_inicial_pago: "valor inicial pago agora",
         recorrencia: "recorrencia",
+        segunda_parcela_data: "data da segunda parcela do valor inicial",
       };
       const readable = invalidFields.map((field) => labels[field] || field).join(", ");
       setConvertInfo(`Preencha corretamente: ${readable}.`);
       return;
     }
 
+    const initialPayments = [];
+    if (valorInicialPagoValue > 0) {
+      initialPayments.push({
+        type: "setup",
+        valor: valorInicialPagoValue,
+        date: now,
+        monthRef,
+      });
+    }
+
     const clientRef = await addDoc(collection(db, "clients"), {
       ...baseClient,
       tipo_contrato: "recorrente",
-      setupValor: valorSetup,
+      valorInicialForma: conversion.formaValorInicial,
+      setupValor: valorInicialTotalValue,
+      valorInicialPago: valorInicialPagoValue,
+      valorInicialPendente: valorInicialRestante,
+      valorInicialSegundaData:
+        valorInicialRestante > 0 && segundaParcelaDate ? Timestamp.fromDate(segundaParcelaDate) : null,
+      valorInicialSegundaPagaEm: null,
       recorrenciaValor: valorRecorrencia,
       recorrenciaData: Timestamp.fromDate(recorrenciaDate),
       recorrenciaDia: recorrenciaDate.getDate(),
+      contratoInicio: Timestamp.fromDate(contratoInicioDate),
+      contratoFim: Timestamp.fromDate(contratoFimDate),
       lastPaymentMonth: "",
-      payments: [
-        {
-          type: "setup",
-          valor: valorSetup,
-          date: now,
-          monthRef,
-        },
-      ],
+      payments: initialPayments,
     });
 
-    await addDoc(collection(db, "finance"), {
-      data: now,
-      valor: valorSetup,
-      tipo: "entrada",
-      categoria: "Receita Cliente",
-      descricao: `Setup - Cliente ${convertLead.nome || ""}`,
-      clientId: clientRef.id,
-      createdAt: serverTimestamp(),
-    });
+    if (valorInicialPagoValue > 0) {
+      await addDoc(collection(db, "finance"), {
+        data: now,
+        valor: valorInicialPagoValue,
+        tipo: "entrada",
+        categoria: "Receita Cliente",
+        descricao: `Valor inicial - Cliente ${convertLead.nome || ""}`,
+        clientId: clientRef.id,
+        createdAt: serverTimestamp(),
+      });
+    }
 
     await updateDoc(doc(db, "leads", convertLead.id), {
       status: "convertido",
@@ -336,7 +461,7 @@ export default function Leads() {
                 ) : null}
                 {isAdmin ? (
                   <button
-                    onClick={() => handleDelete(row.id)}
+                    onClick={() => handleDelete(row)}
                     className="text-xs uppercase tracking-[0.2em] text-red-500"
                   >
                     Excluir
@@ -434,46 +559,168 @@ export default function Leads() {
         }
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <select
-            value={conversion.modalidade}
-            onChange={(event) => setConversion({ ...conversion, modalidade: event.target.value })}
-            className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-          >
-            <option value="unico">Pagamento unico</option>
-            <option value="recorrente">Pagamento recorrente</option>
-          </select>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs uppercase tracking-[0.2em] text-slate/60">Tipo de pagamento</label>
+            <select
+              value={conversion.modalidade}
+              onChange={(event) => setConversion({ ...conversion, modalidade: event.target.value })}
+              className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+            >
+              <option value="unico">Pagamento unico</option>
+              <option value="recorrente">Pagamento recorrente</option>
+            </select>
+          </div>
 
           {conversion.modalidade === "unico" ? (
-            <input
-              type="number"
-              value={conversion.valorTotal}
-              onChange={(event) => setConversion({ ...conversion, valorTotal: event.target.value })}
-              className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-              placeholder="Valor total"
-            />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                Valor total do contrato
+              </label>
+              <input
+                type="number"
+                value={conversion.valorTotal}
+                onChange={(event) => setConversion({ ...conversion, valorTotal: event.target.value })}
+                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                placeholder="Ex: 2500"
+              />
+            </div>
           ) : (
             <>
-              <input
-                type="number"
-                value={conversion.valorSetup}
-                onChange={(event) => setConversion({ ...conversion, valorSetup: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Valor setup"
-              />
-              <input
-                type="number"
-                value={conversion.valorRecorrencia}
-                onChange={(event) => setConversion({ ...conversion, valorRecorrencia: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Valor recorrencia"
-              />
-              <input
-                type="date"
-                value={conversion.recorrenciaData}
-                onChange={(event) => setConversion({ ...conversion, recorrenciaData: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Data da recorrencia"
-              />
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor inicial (total)
+                </label>
+                <input
+                  type="number"
+                  value={conversion.valorInicialTotal}
+                  onChange={(event) =>
+                    setConversion({ ...conversion, valorInicialTotal: event.target.value })
+                  }
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Pagamento do valor inicial
+                </label>
+                <select
+                  value={conversion.formaValorInicial}
+                  onChange={(event) =>
+                    setConversion({
+                      ...conversion,
+                      formaValorInicial: event.target.value,
+                      valorInicialSegundaData:
+                        event.target.value === "integral" ? "" : conversion.valorInicialSegundaData,
+                    })
+                  }
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                >
+                  <option value="integral">100% pago agora</option>
+                  <option value="parcial">Pagamento parcial</option>
+                </select>
+              </div>
+              {isValorInicialParcial ? (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                      Valor inicial pago agora
+                    </label>
+                    <input
+                      type="number"
+                      value={conversion.valorInicialPago}
+                      onChange={(event) =>
+                        setConversion({ ...conversion, valorInicialPago: event.target.value })
+                      }
+                      className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                      placeholder="Ex: 250"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                      Segunda parcela do valor inicial
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={formatCurrency(valorInicialPendente)}
+                      className="rounded-2xl border border-slate/20 bg-slate-50 px-4 py-3 text-sm text-slate/80"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                      Data da segunda parcela
+                    </label>
+                    <input
+                      type="date"
+                      value={conversion.valorInicialSegundaData}
+                      onChange={(event) =>
+                        setConversion({ ...conversion, valorInicialSegundaData: event.target.value })
+                      }
+                      className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                    Valor inicial pago agora
+                  </label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={formatCurrency(valorInicialTotal)}
+                    className="rounded-2xl border border-slate/20 bg-slate-50 px-4 py-3 text-sm text-slate/80"
+                  />
+                </div>
+              )}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor da recorrencia
+                </label>
+                <input
+                  type="number"
+                  value={conversion.valorRecorrencia}
+                  onChange={(event) =>
+                    setConversion({ ...conversion, valorRecorrencia: event.target.value })
+                  }
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 300"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Primeiro vencimento da recorrencia
+                </label>
+                <input
+                  type="date"
+                  value={conversion.recorrenciaData}
+                  onChange={(event) => setConversion({ ...conversion, recorrenciaData: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Data de inicio do contrato
+                </label>
+                <input
+                  type="date"
+                  value={conversion.contratoInicio}
+                  onChange={(event) => setConversion({ ...conversion, contratoInicio: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Data final do contrato
+                </label>
+                <input
+                  type="date"
+                  value={conversion.contratoFim}
+                  onChange={(event) => setConversion({ ...conversion, contratoFim: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
             </>
           )}
         </div>
@@ -483,8 +730,12 @@ export default function Leads() {
             <p>Esse valor entra imediatamente no financeiro como entrada unica.</p>
           ) : (
             <div className="space-y-1">
-              <p>O setup entra imediatamente no financeiro.</p>
-              <p>A recorrencia sera registrada somente ao confirmar o recebimento mensal.</p>
+              <p>
+                {isValorInicialParcial
+                  ? "Somente o valor inicial pago agora entra imediatamente no financeiro."
+                  : "O valor inicial entra completo no financeiro agora."}
+              </p>
+              <p>A segunda parcela do valor inicial e a recorrencia entram apenas apos confirmacao.</p>
             </div>
           )}
         </div>
@@ -527,11 +778,24 @@ export default function Leads() {
           ) : (
             <div className="space-y-1">
               <p className="font-medium">
-                Setup: {formatCurrency(parseNumberInput(conversion.valorSetup))}
+                Valor inicial total: {formatCurrency(valorInicialTotal)}
               </p>
               <p className="font-medium">
-                Mensalidade: {formatCurrency(parseNumberInput(conversion.valorRecorrencia))} (Venc.{" "}
+                Valor inicial pago agora: {formatCurrency(valorInicialPago)}
+              </p>
+              {isValorInicialParcial ? (
+                <p className="font-medium">
+                  Segunda parcela do valor inicial: {formatCurrency(valorInicialPendente)} (Prev.{" "}
+                  {secondInitialDate ? formatDayMonth(secondInitialDate) : "-"})
+                </p>
+              ) : null}
+              <p className="font-medium">
+                Valor da recorrencia: {formatCurrency(parseNumberInput(conversion.valorRecorrencia))} (1o venc.{" "}
                 {recurrenceDate ? formatDayMonth(recurrenceDate) : "-"})
+              </p>
+              <p className="font-medium">
+                Contrato: {contractStartDate ? formatDayMonth(contractStartDate) : "-"} ate{" "}
+                {contractEndDate ? formatDayMonth(contractEndDate) : "-"}
               </p>
             </div>
           )}

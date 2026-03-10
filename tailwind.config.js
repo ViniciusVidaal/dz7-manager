@@ -9,13 +9,13 @@ module.exports = {
       },
       colors: {
         ink: "#0b1015",
-        mist: "#e8f0f3",
-        tide: "#0f766e",
-        glow: "#f59e0b",
+        mist: "#ebf8fc",
+        tide: "#19b6e0",
+        glow: "#74d8f2",
         slate: "#1f2937",
       },
       boxShadow: {
-        glow: "0 20px 45px -30px rgba(245, 158, 11, 0.7)",
+        glow: "0 20px 45px -30px rgba(25, 182, 224, 0.65)",
       },
     },
   },

@@ -4,6 +4,7 @@ import { Mail, Lock } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext";
 import Modal from "../components/Modal";
+import brandLogo from "../assets/logocerta.png";
 
 export default function Login() {
   const { login, requestPasswordReset, user, profile } = useAuth();
@@ -55,8 +56,14 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="glass-panel rounded-[32px] p-10 w-full max-w-lg">
-        <p className="text-xs uppercase tracking-[0.3em] text-slate/60">Dz7 Marketing</p>
-        <h1 className="font-display text-3xl text-slate mt-4">Bem-vindo de volta</h1>
+        <div className="rounded-2xl bg-ink px-5 py-4">
+          <img
+            src={brandLogo}
+            alt="Dz7 Marketing"
+            className="h-12 w-auto max-w-full object-contain mx-auto"
+          />
+        </div>
+        <h1 className="font-display text-3xl text-slate mt-6">Bem-vindo de volta</h1>
         <p className="text-sm text-slate/60 mt-2">
           Acompanhe leads, contratos e saude financeira em um unico painel.
         </p>

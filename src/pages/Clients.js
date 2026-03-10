@@ -3,12 +3,16 @@ import {
   addDoc,
   arrayUnion,
   collection,
-  deleteDoc,
   deleteField,
   doc,
+  getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   updateDoc,
   Timestamp,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { CalendarCheck, Eye } from "lucide-react";
 
@@ -40,6 +44,8 @@ const initialForm = {
   servicos: [],
   valorTotal: "",
   setupValor: "",
+  valorInicialPago: "",
+  valorInicialSegundaData: "",
   recorrenciaValor: "",
   recorrenciaData: "",
   contratoInicio: "",
@@ -57,6 +63,43 @@ const parseNumberInput = (value) => {
   return Number(normalized);
 };
 
+const INITIAL_PAYMENT_TYPES = ["setup", "setup_parcela2", "valor_inicial", "valor_inicial_parcela2"];
+
+const sumInitialPayments = (payments = []) =>
+  payments.reduce((acc, payment) => {
+    if (!INITIAL_PAYMENT_TYPES.includes(payment?.type)) return acc;
+    return acc + Number(payment?.valor || 0);
+  }, 0);
+
+const getInitialPaidValue = (client) => {
+  const explicitPaid = Number(client?.valorInicialPago);
+  if (Number.isFinite(explicitPaid) && explicitPaid >= 0) return explicitPaid;
+
+  const paymentSum = sumInitialPayments(client?.payments || []);
+  if (paymentSum > 0) return paymentSum;
+
+  const total = Number(client?.setupValor || 0);
+  return total > 0 ? total : 0;
+};
+
+const getInitialPendingValue = (client) => {
+  const explicitPending = Number(client?.valorInicialPendente);
+  if (Number.isFinite(explicitPending) && explicitPending >= 0) return explicitPending;
+
+  const total = Number(client?.setupValor || 0);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+
+  return Math.max(0, total - getInitialPaidValue(client));
+};
+
+const getWhatsAppLink = (phoneValue) => {
+  const digits = String(phoneValue || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("55")) return `https://wa.me/${digits}`;
+  if (digits.length === 10 || digits.length === 11) return `https://wa.me/55${digits}`;
+  return `https://wa.me/${digits}`;
+};
+
 
 export default function Clients() {
   const { data: clients } = useCollection("clients", "createdAt");
@@ -70,7 +113,7 @@ export default function Clients() {
 
   const now = new Date();
   const currentMonth = getMonthRef(now);
-  const canEdit = isAdmin || profile?.role === "funcionario";
+  const canEdit = isAdmin;
 
   const contractStartDate = useMemo(
     () => parseDateInput(form.contratoInicio),
@@ -79,6 +122,18 @@ export default function Clients() {
   const contractEndDate = useMemo(
     () => parseDateInput(form.contratoFim),
     [form.contratoFim]
+  );
+  const valorInicialTotal = useMemo(
+    () => parseNumberInput(form.setupValor),
+    [form.setupValor]
+  );
+  const valorInicialPago = useMemo(
+    () => parseNumberInput(form.valorInicialPago),
+    [form.valorInicialPago]
+  );
+  const valorInicialPendente = useMemo(
+    () => Math.max(0, valorInicialTotal - valorInicialPago),
+    [valorInicialTotal, valorInicialPago]
   );
 
   const recurringClients = useMemo(
@@ -139,6 +194,36 @@ export default function Clients() {
     });
   };
 
+  const handleConfirmInitialInstallment = async (client) => {
+    const pendingValue = getInitialPendingValue(client);
+    if (pendingValue <= 0) return;
+
+    const currentPaid = getInitialPaidValue(client);
+    const nowTimestamp = Timestamp.now();
+    await addDoc(collection(db, "finance"), {
+      data: nowTimestamp,
+      valor: pendingValue,
+      tipo: "entrada",
+      categoria: "Receita Cliente",
+      descricao: `2a parcela valor inicial - Cliente ${client.nome || ""}`,
+      clientId: client.id,
+      createdAt: serverTimestamp(),
+    });
+
+    await updateDoc(doc(db, "clients", client.id), {
+      valorInicialPago: currentPaid + pendingValue,
+      valorInicialPendente: 0,
+      valorInicialSegundaPagaEm: nowTimestamp,
+      payments: arrayUnion({
+        type: "setup_parcela2",
+        valor: pendingValue,
+        date: nowTimestamp,
+        monthRef: currentMonth,
+      }),
+      updatedAt: serverTimestamp(),
+    });
+  };
+
   const handleDelete = async (client) => {
     if (!isAdmin) return;
     const confirmed = window.confirm(
@@ -146,22 +231,42 @@ export default function Clients() {
     );
     if (!confirmed) return;
 
-    if (client.leadId) {
-      await updateDoc(doc(db, "leads", client.leadId), {
-        status: "lead",
-        clientId: deleteField(),
-        updatedAt: serverTimestamp(),
-      });
-    }
+    try {
+      const batch = writeBatch(db);
 
-    await deleteDoc(doc(db, "clients", client.id));
+      if (client.leadId) {
+        const leadRef = doc(db, "leads", client.leadId);
+        const leadSnapshot = await getDoc(leadRef);
+        if (leadSnapshot.exists()) {
+          batch.update(leadRef, {
+            status: "lead",
+            clientId: deleteField(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      const financeRef = collection(db, "finance");
+      const financeQuery = query(financeRef, where("clientId", "==", client.id));
+      const financeSnapshot = await getDocs(financeQuery);
+      financeSnapshot.forEach((financeDoc) => {
+        batch.delete(financeDoc.ref);
+      });
+
+      batch.delete(doc(db, "clients", client.id));
+      await batch.commit();
+    } catch (error) {
+      window.alert("Nao foi possivel excluir o cliente agora.");
+    }
   };
 
   const openEdit = (client) => {
     const startDate = normalizeDate(client.contratoInicio);
     const endDate = normalizeDate(client.contratoFim);
     const recurrenceBase = normalizeDate(client.recorrenciaData);
+    const secondInstallmentDate = normalizeDate(client.valorInicialSegundaData);
     const fallbackRecurrence = recurrenceBase || getNextRecurringDate(client, now);
+    const initialPaid = getInitialPaidValue(client);
 
     setForm({
       nome: client.nome || "",
@@ -171,6 +276,8 @@ export default function Clients() {
       servicos: client.servicos_contratados || [],
       valorTotal: client.valor_total ?? "",
       setupValor: client.setupValor ?? "",
+      valorInicialPago: initialPaid > 0 ? initialPaid : "",
+      valorInicialSegundaData: secondInstallmentDate ? toDateInputValue(secondInstallmentDate) : "",
       recorrenciaValor: client.recorrenciaValor ?? "",
       recorrenciaData: fallbackRecurrence ? toDateInputValue(fallbackRecurrence) : "",
       contratoInicio: startDate ? toDateInputValue(startDate) : "",
@@ -226,8 +333,11 @@ export default function Clients() {
     }
 
     const valorSetup = parseNumberInput(form.setupValor);
+    const valorInicialPagoForm = parseNumberInput(form.valorInicialPago);
     const valorRecorrencia = parseNumberInput(form.recorrenciaValor);
     const recorrenciaDate = parseDateInput(form.recorrenciaData);
+    const segundaParcelaDate = parseDateInput(form.valorInicialSegundaData);
+    const valorInicialRestante = Math.max(0, valorSetup - valorInicialPagoForm);
 
     if (!contractStartDate) {
       setEditInfo("Informe o inicio do contrato.");
@@ -249,13 +359,35 @@ export default function Clients() {
       return;
     }
 
+    if (recorrenciaDate < contractStartDate) {
+      setEditInfo("A recorrencia deve iniciar a partir da data de inicio do contrato.");
+      return;
+    }
+
+    if (recorrenciaDate > contractEndDate) {
+      setEditInfo("A recorrencia nao pode iniciar depois da data final do contrato.");
+      return;
+    }
+
+    if (segundaParcelaDate && segundaParcelaDate > contractEndDate) {
+      setEditInfo("A segunda parcela do valor inicial nao pode passar da data final do contrato.");
+      return;
+    }
+
     const invalidFields = [];
-    if (!Number.isFinite(valorSetup) || valorSetup < 0) invalidFields.push("setup");
+    if (!Number.isFinite(valorSetup) || valorSetup < 0) invalidFields.push("valor_inicial");
+    if (!Number.isFinite(valorInicialPagoForm) || valorInicialPagoForm < 0) {
+      invalidFields.push("valor_inicial_pago");
+    }
+    if (valorInicialPagoForm > valorSetup) invalidFields.push("valor_inicial_pago");
     if (!Number.isFinite(valorRecorrencia) || valorRecorrencia <= 0) invalidFields.push("recorrencia");
+    if (valorInicialRestante > 0 && !segundaParcelaDate) invalidFields.push("segunda_parcela_data");
     if (invalidFields.length > 0) {
       const labels = {
-        setup: "setup",
+        valor_inicial: "valor inicial",
+        valor_inicial_pago: "valor inicial pago agora",
         recorrencia: "recorrencia",
+        segunda_parcela_data: "data da segunda parcela do valor inicial",
       };
       const readable = invalidFields.map((field) => labels[field] || field).join(", ");
       setEditInfo(`Preencha corretamente: ${readable}.`);
@@ -265,6 +397,10 @@ export default function Clients() {
     const payload = {
       ...baseData,
       setupValor: valorSetup,
+      valorInicialPago: valorInicialPagoForm,
+      valorInicialPendente: valorInicialRestante,
+      valorInicialSegundaData:
+        valorInicialRestante > 0 && segundaParcelaDate ? Timestamp.fromDate(segundaParcelaDate) : null,
       recorrenciaValor: valorRecorrencia,
       recorrenciaData: Timestamp.fromDate(recorrenciaDate),
       recorrenciaDia: recorrenciaDate.getDate(),
@@ -299,6 +435,17 @@ export default function Clients() {
     const empresa = String(client.empresa || "").toLowerCase();
     return nome.includes(term) || empresa.includes(term);
   });
+
+  if (!isAdmin) {
+    return (
+      <Layout>
+        <Topbar title="Clientes" subtitle="Acesso restrito" />
+        <div className="glass-panel rounded-3xl p-6">
+          <p className="text-sm text-slate/60">Somente administradores podem acessar Clientes.</p>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -347,7 +494,26 @@ export default function Clients() {
         columns={[
           { key: "nome", label: "Nome" },
           { key: "empresa", label: "Empresa" },
-          { key: "email", label: "Email" },
+          {
+            key: "telefone",
+            label: "Telefone",
+            render: (row) => {
+              const phone = row.telefone || "";
+              const link = getWhatsAppLink(phone);
+              if (!link) return "-";
+              return (
+                <a
+                  href={link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-tide hover:underline"
+                  title="Abrir conversa no WhatsApp"
+                >
+                  {phone}
+                </a>
+              );
+            },
+          },
           {
             key: "servicos_contratados",
             label: "Servicos",
@@ -368,11 +534,29 @@ export default function Clients() {
             },
           },
           {
+            key: "valor_inicial",
+            label: "Valor inicial",
+            render: (row) => {
+              if (row.tipo_contrato !== "recorrente") return "-";
+              const totalValue = Number(row.setupValor || 0);
+              if (totalValue <= 0) return "Sem valor inicial";
+              const pending = getInitialPendingValue(row);
+              const secondDate = normalizeDate(row.valorInicialSegundaData);
+              if (pending <= 0) return `${formatCurrency(totalValue)} (quitado)`;
+              return `${formatCurrency(totalValue)} (pendente ${formatCurrency(pending)} ate ${
+                secondDate ? formatDayMonth(secondDate) : "-"
+              })`;
+            },
+          },
+          {
             key: "status",
             label: "Status",
             render: (row) => {
               if (row.tipo_contrato !== "recorrente") {
                 return "Unico";
+              }
+              if (row.lastPaymentMonth === currentMonth) {
+                return "Pago";
               }
               const dueDate = getNextRecurringDate(row, now);
               if (!dueDate) {
@@ -380,7 +564,7 @@ export default function Clients() {
               }
               const dueMonthRef = getMonthRef(dueDate);
               if (row.lastPaymentMonth === dueMonthRef) {
-                return "Pago mes atual";
+                return "Pago";
               }
               return `A vencer ${formatDayMonth(dueDate)}`;
             },
@@ -396,6 +580,10 @@ export default function Clients() {
                 row.tipo_contrato === "recorrente" &&
                 dueMonthRef === currentMonth &&
                 row.lastPaymentMonth !== currentMonth;
+              const canConfirmInitial =
+                isAdmin &&
+                row.tipo_contrato === "recorrente" &&
+                getInitialPendingValue(row) > 0;
 
               return (
                 <div className="flex flex-wrap gap-2">
@@ -412,6 +600,14 @@ export default function Clients() {
                       className="text-xs uppercase tracking-[0.2em] text-tide"
                     >
                       {isAdmin ? "Editar" : "Solicitar"}
+                    </button>
+                  ) : null}
+                  {canConfirmInitial ? (
+                    <button
+                      onClick={() => handleConfirmInitialInstallment(row)}
+                      className="text-xs uppercase tracking-[0.2em] text-emerald-600"
+                    >
+                      Confirmar 2a parcela inicial
                     </button>
                   ) : null}
                   {canConfirm ? (
@@ -452,13 +648,31 @@ export default function Clients() {
               <p>{selected?.tipo_contrato}</p>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Recorrencia</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Valor da recorrencia</p>
               <p>
                 {selected?.tipo_contrato === "recorrente"
                   ? formatCurrency(selected?.recorrenciaValor)
                   : "Pagamento unico"}
               </p>
             </div>
+            {selected?.tipo_contrato === "recorrente" ? (
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Valor inicial</p>
+                <p>
+                  {formatCurrency(selected?.setupValor)} | Pendente{" "}
+                  {formatCurrency(getInitialPendingValue(selected))}
+                </p>
+              </div>
+            ) : null}
+            {selected?.tipo_contrato === "recorrente" ? (
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Vigencia do contrato</p>
+                <p>
+                  {formatDate(normalizeDate(selected?.contratoInicio))} ate{" "}
+                  {formatDate(normalizeDate(selected?.contratoFim))}
+                </p>
+              </div>
+            ) : null}
             <div className="md:col-span-2">
               <p className="text-xs uppercase tracking-[0.2em] text-slate/50">Servicos contratados</p>
               <p>{(selected?.servicos_contratados || []).join(", ") || "Nao informado"}</p>
@@ -483,7 +697,13 @@ export default function Clients() {
                       <div>
                         <p className="text-sm text-slate">
                           {payment.type === "setup"
-                            ? "Setup"
+                            ? "Valor inicial"
+                            : payment.type === "setup_parcela2"
+                              ? "2a parcela do valor inicial"
+                              : payment.type === "valor_inicial"
+                                ? "Valor inicial"
+                                : payment.type === "valor_inicial_parcela2"
+                                  ? "2a parcela do valor inicial"
                             : payment.type === "mensalidade"
                               ? `Mensalidade ${payment.monthRef || ""}`
                               : "Pagamento unico"}
@@ -583,52 +803,114 @@ export default function Clients() {
         <div className="mt-6">
           <p className="text-xs uppercase tracking-[0.2em] text-slate/60 mb-2">Contrato</p>
           {editing?.tipo_contrato === "unico" ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input
-                type="number"
-                value={form.valorTotal}
-                onChange={(event) => setForm({ ...form, valorTotal: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Valor total"
-              />
+            <div className="grid grid-cols-1 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor total do contrato
+                </label>
+                <input
+                  type="number"
+                  value={form.valorTotal}
+                  onChange={(event) => setForm({ ...form, valorTotal: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 2500"
+                />
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input
-                type="number"
-                value={form.setupValor}
-                onChange={(event) => setForm({ ...form, setupValor: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Valor setup"
-              />
-              <input
-                type="number"
-                value={form.recorrenciaValor}
-                onChange={(event) => setForm({ ...form, recorrenciaValor: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Valor recorrencia"
-              />
-              <input
-                type="date"
-                value={form.recorrenciaData}
-                onChange={(event) => setForm({ ...form, recorrenciaData: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Data da recorrencia"
-              />
-              <input
-                type="date"
-                value={form.contratoInicio}
-                onChange={(event) => setForm({ ...form, contratoInicio: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Inicio do contrato"
-              />
-              <input
-                type="date"
-                value={form.contratoFim}
-                onChange={(event) => setForm({ ...form, contratoFim: event.target.value })}
-                className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
-                placeholder="Termino do contrato"
-              />
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor inicial (total)
+                </label>
+                <input
+                  type="number"
+                  value={form.setupValor}
+                  onChange={(event) => setForm({ ...form, setupValor: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor inicial pago agora
+                </label>
+                <input
+                  type="number"
+                  value={form.valorInicialPago}
+                  onChange={(event) => setForm({ ...form, valorInicialPago: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 250"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Segunda parcela do valor inicial
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={formatCurrency(valorInicialPendente)}
+                  className="rounded-2xl border border-slate/20 bg-slate-50 px-4 py-3 text-sm text-slate/80"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Data da segunda parcela
+                </label>
+                <input
+                  type="date"
+                  value={form.valorInicialSegundaData}
+                  onChange={(event) => setForm({ ...form, valorInicialSegundaData: event.target.value })}
+                  disabled={valorInicialPendente <= 0}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Valor da recorrencia
+                </label>
+                <input
+                  type="number"
+                  value={form.recorrenciaValor}
+                  onChange={(event) => setForm({ ...form, recorrenciaValor: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                  placeholder="Ex: 300"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Primeiro vencimento da recorrencia
+                </label>
+                <input
+                  type="date"
+                  value={form.recorrenciaData}
+                  onChange={(event) => setForm({ ...form, recorrenciaData: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Data de inicio do contrato
+                </label>
+                <input
+                  type="date"
+                  value={form.contratoInicio}
+                  onChange={(event) => setForm({ ...form, contratoInicio: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs uppercase tracking-[0.2em] text-slate/60">
+                  Data final do contrato
+                </label>
+                <input
+                  type="date"
+                  value={form.contratoFim}
+                  onChange={(event) => setForm({ ...form, contratoFim: event.target.value })}
+                  className="rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm"
+                />
+              </div>
             </div>
           )}
         </div>
